@@ -42,9 +42,16 @@ with open(MATERIAL_DB_PATH, newline="", encoding="utf-8-sig") as f:
         MATERIAL_DB[row["Material"].strip().lower()] = row
 print(f"Loaded {len(MATERIAL_DB)} materials from material_database.csv")
 
+# Fast inference function + warm-up so the first real request isn't slow
+infer = tf.function(lambda x: model(x, training=False))
+infer(np.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=np.float32))
+print("Model warmed up")
+
 
 def preprocess_image(file_bytes):
-    img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    img = Image.open(io.BytesIO(file_bytes))
+    img.draft("RGB", (IMG_SIZE[0] * 2, IMG_SIZE[1] * 2))  # fast downscale while decoding JPEGs
+    img = img.convert("RGB")
     img = img.resize(IMG_SIZE)
     arr = np.array(img, dtype=np.float32)
     arr = np.expand_dims(arr, axis=0)  # model applies its own preprocess_input internally
@@ -72,7 +79,7 @@ def predict():
     except Exception as e:
         return jsonify({"error": f"Could not read image: {e}"}), 400
 
-    predictions = model.predict(arr, verbose=0)[0]  # shape: (num_classes,)
+    predictions = infer(arr).numpy()[0]  # shape: (num_classes,)
     top_idx = int(np.argmax(predictions))
     top_label = CLASS_NAMES[top_idx]
     top_confidence = float(predictions[top_idx])
