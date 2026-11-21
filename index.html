@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fabric AI Detection</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #f1f5f2;
+    color: #1f2937;
+    display: flex;
+    justify-content: center;
+    padding: 24px 12px;
+  }
+  .card {
+    background: #ffffff;
+    width: 100%;
+    max-width: 560px;
+    border-radius: 14px;
+    padding: 28px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+  }
+  h1 { margin: 0 0 4px; font-size: 1.6rem; color: #166534; }
+  .sub { margin: 0 0 22px; color: #6b7280; font-size: 0.95rem; }
+
+  .drop {
+    border: 2px dashed #9ca3af;
+    border-radius: 12px;
+    padding: 26px 14px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .drop:hover, .drop.drag { background: #f0fdf4; border-color: #16a34a; }
+  .drop p { margin: 0; color: #4b5563; }
+  #preview {
+    display: none;
+    max-width: 100%;
+    max-height: 260px;
+    margin: 0 auto;
+    border-radius: 10px;
+  }
+  input[type="file"] { display: none; }
+
+  button {
+    margin-top: 16px;
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    background: #16a34a;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #15803d; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+
+  #status { margin-top: 14px; text-align: center; color: #6b7280; min-height: 1.2em; }
+  #error { color: #b91c1c; }
+
+  #result { display: none; margin-top: 22px; }
+  .headline {
+    display: flex; justify-content: space-between; align-items: baseline;
+    flex-wrap: wrap; gap: 6px;
+  }
+  .fabric { font-size: 1.5rem; font-weight: 700; text-transform: capitalize; }
+  .conf { color: #4b5563; font-weight: 600; }
+
+  .badge {
+    display: inline-block;
+    margin: 12px 0 6px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    background: #e5e7eb;
+    color: #374151;
+  }
+  .badge.good { background: #dcfce7; color: #166534; }
+  .badge.mid  { background: #fef3c7; color: #92400e; }
+  .badge.bad  { background: #fee2e2; color: #991b1b; }
+
+  .info { margin: 6px 0; font-size: 0.95rem; line-height: 1.45; }
+  .info b { color: #111827; }
+
+  h3 { margin: 20px 0 8px; font-size: 1rem; color: #374151; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.9rem; }
+  .bar-label { width: 110px; text-transform: capitalize; }
+  .bar-track { flex: 1; background: #e5e7eb; border-radius: 6px; height: 12px; overflow: hidden; }
+  .bar-fill { height: 100%; background: #16a34a; width: 0; transition: width 0.4s; }
+  .bar-pct { width: 52px; text-align: right; color: #4b5563; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Fabric AI Detection</h1>
+    <p class="sub">Upload a fabric photo to identify the fabric type and see its sustainability rating.</p>
+
+    <label class="drop" id="drop" for="file">
+      <img id="preview" alt="Selected fabric preview">
+      <p id="dropText">Click to choose an image, or drag and drop it here</p>
+    </label>
+    <input type="file" id="file" accept="image/*">
+
+    <button id="btn" disabled>Analyze Fabric</button>
+    <div id="status"></div>
+
+    <div id="result">
+      <div class="headline">
+        <span class="fabric" id="fabricName"></span>
+        <span class="conf" id="confidence"></span>
+      </div>
+      <span class="badge" id="category"></span>
+      <p class="info"><b>Fibre type:</b> <span id="fibre"></span></p>
+      <p class="info"><b>Why:</b> <span id="reason"></span></p>
+
+      <h3>All predictions</h3>
+      <div id="bars"></div>
+    </div>
+  </div>
+
+<script>
+  const fileInput = document.getElementById("file");
+  const drop = document.getElementById("drop");
+  const preview = document.getElementById("preview");
+  const dropText = document.getElementById("dropText");
+  const btn = document.getElementById("btn");
+  const statusEl = document.getElementById("status");
+  const resultEl = document.getElementById("result");
+
+  let selectedFile = null;
+
+  function setFile(file) {
+    if (!file || !file.type.startsWith("image/")) {
+      statusEl.innerHTML = '<span id="error">Please choose an image file.</span>';
+      return;
+    }
+    selectedFile = file;
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = "block";
+    dropText.style.display = "none";
+    btn.disabled = false;
+    statusEl.textContent = "";
+    resultEl.style.display = "none";
+  }
+
+  fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+
+  ["dragenter", "dragover"].forEach(ev =>
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach(ev =>
+    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+  drop.addEventListener("drop", e => setFile(e.dataTransfer.files[0]));
+
+  function badgeClass(category) {
+    const c = (category || "").toLowerCase();
+    if (/\b(un|not|non|low|poor|harmful|high impact)/.test(c) || c.includes("unsustainable")) return "bad";
+    if (c.includes("moderate") || c.includes("medium") || c.includes("mixed")) return "mid";
+    if (c.includes("sustainable") || c.includes("eco") || c.includes("high") || c.includes("good")) return "good";
+    return "";
+  }
+
+  btn.addEventListener("click", async () => {
+    if (!selectedFile) return;
+
+    btn.disabled = true;
+    statusEl.textContent = "Analyzing... the first request may take a few seconds.";
+    resultEl.style.display = "none";
+
+    const formData = new FormData();
+    formData.append("image", selectedFile);
+
+    try {
+      const res = await fetch("/predict", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Prediction failed");
+
+      document.getElementById("fabricName").textContent = data.fabric_type;
+      document.getElementById("confidence").textContent =
+        (data.confidence * 100).toFixed(1) + "% confidence";
+
+      const badge = document.getElementById("category");
+      badge.textContent = data.sustainability.category;
+      badge.className = "badge " + badgeClass(data.sustainability.category);
+
+      document.getElementById("fibre").textContent = data.sustainability.fibre_type;
+      document.getElementById("reason").textContent = data.sustainability.reason;
+
+      const bars = document.getElementById("bars");
+      bars.innerHTML = "";
+      data.ranked_predictions.forEach(p => {
+        const pct = (p.confidence * 100).toFixed(1);
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        row.innerHTML =
+          '<span class="bar-label"></span>' +
+          '<div class="bar-track"><div class="bar-fill"></div></div>' +
+          '<span class="bar-pct">' + pct + '%</span>';
+        row.querySelector(".bar-label").textContent = p.fabric;
+        bars.appendChild(row);
+        requestAnimationFrame(() => {
+          row.querySelector(".bar-fill").style.width = pct + "%";
+        });
+      });
+
+      statusEl.textContent = "";
+      resultEl.style.display = "block";
+    } catch (err) {
+      statusEl.innerHTML = '<span id="error"></span>';
+      document.getElementById("error").textContent = "Error: " + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
