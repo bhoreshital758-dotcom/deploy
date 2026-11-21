@@ -1,26 +1,32 @@
 """
-app.py
+app.py  (lightweight TensorFlow Lite version)
 
-Flask app that loads the trained fabric_model.keras, predicts the
-fabric type of an uploaded image, and looks up its sustainability
-category from material_database.csv (two-stage design:
-image -> fabric type -> lookup -> eco label).
+Flask app that runs fabric_model.tflite with the small LiteRT runtime
+(no full TensorFlow), predicts the fabric type of an uploaded image, and
+looks up its sustainability category from material_database.csv.
 
 Serves the frontend (index.html) at "/" and the prediction API at "/predict".
+
+Expects these files in the SAME folder as app.py:
+    index.html
+    fabric_model.tflite
+    fabric_model_labels.txt
+    material_database.csv
 """
 
 import os
 import csv
 import io
+import threading
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from PIL import Image
 import numpy as np
-import tensorflow as tf
+from ai_edge_litert.interpreter import Interpreter
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(APP_DIR, "fabric_model.keras")
+MODEL_PATH = os.path.join(APP_DIR, "fabric_model.tflite")
 LABELS_PATH = os.path.join(APP_DIR, "fabric_model_labels.txt")
 MATERIAL_DB_PATH = os.path.join(APP_DIR, "material_database.csv")
 IMG_SIZE = (224, 224)
@@ -29,7 +35,11 @@ app = Flask(__name__)
 CORS(app)
 
 print("Loading model...")
-model = tf.keras.models.load_model(MODEL_PATH)
+interpreter = Interpreter(model_path=MODEL_PATH)
+interpreter.allocate_tensors()
+INPUT_INDEX = interpreter.get_input_details()[0]["index"]
+OUTPUT_INDEX = interpreter.get_output_details()[0]["index"]
+interp_lock = threading.Lock()
 
 with open(LABELS_PATH, encoding="utf-8") as f:
     CLASS_NAMES = [line.strip() for line in f if line.strip()]
@@ -42,9 +52,16 @@ with open(MATERIAL_DB_PATH, newline="", encoding="utf-8-sig") as f:
         MATERIAL_DB[row["Material"].strip().lower()] = row
 print(f"Loaded {len(MATERIAL_DB)} materials from material_database.csv")
 
-# Fast inference function + warm-up so the first real request isn't slow
-infer = tf.function(lambda x: model(x, training=False))
-infer(np.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=np.float32))
+
+def run_model(arr):
+    with interp_lock:
+        interpreter.set_tensor(INPUT_INDEX, arr)
+        interpreter.invoke()
+        return interpreter.get_tensor(OUTPUT_INDEX)[0].copy()
+
+
+# Warm-up so the first real request isn't slow
+run_model(np.zeros((1, IMG_SIZE[0], IMG_SIZE[1], 3), dtype=np.float32))
 print("Model warmed up")
 
 
@@ -79,7 +96,7 @@ def predict():
     except Exception as e:
         return jsonify({"error": f"Could not read image: {e}"}), 400
 
-    predictions = infer(arr).numpy()[0]  # shape: (num_classes,)
+    predictions = run_model(arr)  # shape: (num_classes,)
     top_idx = int(np.argmax(predictions))
     top_label = CLASS_NAMES[top_idx]
     top_confidence = float(predictions[top_idx])
